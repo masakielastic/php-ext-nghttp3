@@ -201,16 +201,21 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 
 ## Tests
 
-Run the focused QPACK tests:
+Run the focused PHPT tests:
 
 ```sh
 cd ext
 env LD_LIBRARY_PATH="$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH" \
 php run-tests.php \
   -d extension=/absolute/path/to/ext/modules/nghttp3.so \
+  tests/client_server_roundtrip.phpt \
+  tests/client_server_validation.phpt \
   tests/qpack_roundtrip.phpt \
-  tests/qpack_validation.phpt
+  tests/qpack_validation.phpt \
+  tests/server_loop.phpt
 ```
+
+The client/server PHPTs open localhost UDP sockets and start child PHP processes.
 
 Run the full extension test target:
 
