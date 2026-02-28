@@ -10,6 +10,6 @@ if test "$PHP_NGHTTP3" != "no"; then
   PHP_EVAL_INCLINE([$NGHTTP3_DEPS_CFLAGS])
   PHP_EVAL_LIBLINE([$NGHTTP3_DEPS_LIBS], [NGHTTP3_SHARED_LIBADD])
 
-  PHP_NEW_EXTENSION([nghttp3], [nghttp3.c client.c server.c], [$ext_shared])
+  PHP_NEW_EXTENSION([nghttp3], [nghttp3.c client.c qpack.c server.c], [$ext_shared])
   PHP_SUBST([NGHTTP3_SHARED_LIBADD])
 fi

@@ -9,6 +9,7 @@
 PHP_MINIT_FUNCTION(nghttp3)
 {
 	php_nghttp3_register_client_class();
+	php_nghttp3_register_qpack_class();
 	php_nghttp3_register_server_class();
 	return SUCCESS;
 }
