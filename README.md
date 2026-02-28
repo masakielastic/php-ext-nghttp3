@@ -62,6 +62,12 @@ php -d extension=/absolute/path/to/ext/modules/nghttp3.so -m | grep nghttp3
 - extension name: `nghttp3`
 - build path: `ext`
 
+You can install the extension with PIE by running:
+
+```sh
+pie install masakielastic/nghttp3
+```
+
 ## API
 
 ### Client
