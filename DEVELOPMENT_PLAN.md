@@ -32,7 +32,7 @@ The extension build should resolve its compiler and linker flags through `pkg-co
      - `body`
      - `http_version`
 3. Protocol plumbing
-   - Reuse the request lifecycle from `sample_client.c`.
+   - Keep the request lifecycle in `ext/client.c` aligned with the current ngtcp2/nghttp3 reference flow.
    - Initialize UDP socket, TLS 1.3, QUIC transport, HTTP/3 control streams, and a single bidirectional request stream.
 4. Verification
    - Build with `phpize`, `./configure`, and `make`.
@@ -50,6 +50,147 @@ The extension build should resolve its compiler and linker flags through `pkg-co
   - Shared declarations for module and class registration.
 
 This layout keeps transport-heavy code out of the module entry file and leaves a clean slot for a future server class without forcing another large refactor.
+
+## Minimal Server Implementation Plan
+
+This plan keeps the first server milestone intentionally small and now maps directly to the current `ext/server.c` implementation.
+
+### Target behavior
+
+- Expose `Nghttp3\Server` as a blocking HTTP/3 server for a single connection.
+- Accept one client connection over UDP + QUIC + HTTP/3.
+- Return a fixed response once the request stream reaches end-of-stream.
+- Exit after the first request/response cycle completes.
+
+### Proposed first PHP API
+
+1. Construction and configuration
+   - `Nghttp3\Server::__construct(int $port = 4433)`
+   - `Nghttp3\Server::setTls(string $certFile, string $keyFile): void`
+   - `Nghttp3\Server::setResponse(string $body, int $status = 200, array $headers = []): void`
+2. Execution
+   - `Nghttp3\Server::serveOnce(): void`
+
+This API mirrors the current server lifecycle:
+- choose a UDP port
+- load certificate and private key
+- serve a single fixed response
+- stop after one exchange
+
+### Scope for the first server milestone
+
+- IPv4 only.
+- One listening socket.
+- One accepted peer address at a time.
+- One QUIC connection lifecycle.
+- One fixed in-memory response body.
+- No PHP callback dispatch.
+- No concurrent connections.
+- No graceful multi-request loop yet.
+
+### Implementation Mapping
+
+1. Socket and listener setup
+   - Reuse `setup_socket()` as the basis for `listen` behavior inside `serveOnce()`.
+   - Keep UDP bind + nonblocking socket semantics.
+2. TLS server context
+   - Reuse `setup_ssl_ctx()` for certificate and key loading.
+   - Move cert/key paths into server object state.
+3. QUIC connection acceptance
+   - Reuse `create_server_conn()` and `q_recv_client_initial_cb()`.
+   - Preserve the current single-peer model by pinning the first accepted remote address.
+4. HTTP/3 server connection
+   - Reuse `setup_h3()` and `bind_h3_unidirectional_streams()`.
+   - Keep current control stream and QPACK stream setup unchanged.
+5. Request lifecycle
+   - Reuse `h3_recv_header_cb()` and `h3_end_stream_cb()`.
+   - Keep minimal request handling: request headers may be stored for debugging, but no user routing logic is needed in the first step.
+6. Response submission
+   - Reuse `submit_pending_responses()` and `read_resp_data_cb()`.
+   - Replace the current static `RESP_BODY` with server object properties for body, status, and headers.
+7. Event loop
+   - Reuse `read_udp_once()`, `drive_tx()`, and `run()`.
+   - Keep a blocking `serveOnce()` API rather than introducing background threads or event integration.
+
+### Internal implementation phases
+
+1. Define the PHP object shape in `ext/server.c`
+   - port
+   - certificate path
+   - private key path
+   - response status
+   - response headers
+   - response body
+2. Keep the server runtime in `ext/server.c` and refine it incrementally
+   - Keep server-only transport code in `ext/server.c` initially.
+   - Extract shared utilities into common files only if client/server duplication becomes hard to manage.
+3. Bridge runtime state to the PHP object
+   - Keep the internal runtime struct allocated per `serveOnce()` or `serve()` call.
+   - Convert `stream_ctx` linked-list handling as-is for the first milestone.
+4. Add argument validation and failure paths
+   - Require TLS files before `serveOnce()`.
+   - Reject invalid port ranges.
+   - Reject calling `serveOnce()` without a configured response.
+5. Verify with a single client request
+   - Start `Nghttp3\Server`.
+   - Hit it with `Nghttp3\Client`.
+   - Confirm status, headers, and body match the configured response.
+
+### Verified localhost workflow
+
+The current minimal implementation has been verified with a localhost round-trip using a temporary self-signed certificate.
+
+1. Generate a localhost certificate
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost" \
+  -keyout /tmp/nghttp3-localhost.key \
+  -out /tmp/nghttp3-localhost.crt \
+  -days 1
+```
+
+2. Start the server
+
+```sh
+export LD_LIBRARY_PATH="$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH"
+
+php -d extension=/home/masakielastic/php-ext-nghttp3/ext/modules/nghttp3.so \
+  /home/masakielastic/php-ext-nghttp3/examples/server_once.php \
+  18443 /tmp/nghttp3-localhost.crt /tmp/nghttp3-localhost.key
+```
+
+3. Run the client
+
+```sh
+export LD_LIBRARY_PATH="$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH"
+export SSL_CERT_FILE=/tmp/nghttp3-localhost.crt
+export SSL_CERT_DIR=/etc/ssl/certs
+
+php -d extension=/home/masakielastic/php-ext-nghttp3/ext/modules/nghttp3.so \
+  /home/masakielastic/php-ext-nghttp3/examples/client_get.php \
+  https://localhost:18443/ 10000
+```
+
+Expected result:
+- status `200`
+- `http_version` is `3`
+- `content-type: application/json`
+- response body from `Nghttp3\Server::setResponse()`
+
+The current `Nghttp3\Server::serve(int $maxRequests = 0)` implementation has also been verified with `maxRequests = 2`, serving two sequential localhost client connections before returning.
+
+### Deliberately deferred after the first milestone
+
+- Request handler callbacks from PHP.
+- Per-request dynamic responses.
+- Multiple requests over the same connection.
+- Multiple concurrent clients.
+- IPv6 support.
+- Certificate hot reload.
+- Graceful shutdown hooks.
+- Integration with external event loops.
 
 ## Constraints For This Minimal Version
 
